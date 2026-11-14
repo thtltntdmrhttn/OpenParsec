@@ -135,6 +135,8 @@ class ParsecSDKBridge: ParsecService {
 	private var capsLock = false
 
 	public var mouseInfo = MouseInfo()
+	// when we last moved the pointer ourselves, cursor events right after are our own move coming back
+	private var lastLocalMove: TimeInterval = 0
 
 	init() {
 		os_log("%{public}@", log: sdkLog, "Parsec SDK Version: " + String(ParsecSDKBridge.PARSEC_VER))
@@ -421,6 +423,13 @@ class ParsecSDKBridge: ParsecService {
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
 
+		// the host moved the cursor without us (its own mouse, another guest), follow it
+		if !event.cursor.relative && !event.cursor.hidden
+			&& ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3 {
+			mouseInfo.mouseX = Int32(event.cursor.positionX)
+			mouseInfo.mouseY = Int32(event.cursor.positionY)
+		}
+
 		if event.cursor.imageUpdate || !sawCursor {
 			sawCursor = true
 			let imgKey = event.key
@@ -517,6 +526,7 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func sendMousePosition(_ x: Int32, _ y: Int32) {
+		lastLocalMove = ProcessInfo.processInfo.systemUptime
 		mouseInfo.mouseX = ParsecSDKBridge.clamp(x, minValue: 0, maxValue: Int32(self.clientWidth))
 		mouseInfo.mouseY = ParsecSDKBridge.clamp(y, minValue: 0, maxValue: Int32(self.clientHeight))
 		var motionMessage = ParsecMessage()
@@ -527,6 +537,7 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func sendMouseRelativeMove(_ dx: Int32, _ dy: Int32) {
+		lastLocalMove = ProcessInfo.processInfo.systemUptime
 		var motionMessage = ParsecMessage()
 		motionMessage.type = MESSAGE_MOUSE_MOTION
 		motionMessage.mouseMotion.x = dx
