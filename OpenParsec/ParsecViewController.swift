@@ -265,6 +265,22 @@ class ParsecViewController: UIViewController, UIScrollViewDelegate, ParsecTouchI
 		u!.isUserInteractionEnabled = false
 		view.addSubview(u!)
 
+		// TEST ONLY (issue 131): cursor event readout
+		let probeLabel = UILabel(frame: CGRect(x: 12, y: 44, width: 620, height: 58))
+		probeLabel.numberOfLines = 3
+		probeLabel.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+		probeLabel.textColor = .green
+		probeLabel.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+		probeLabel.isUserInteractionEnabled = false
+		view.addSubview(probeLabel)
+		Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak probeLabel] timer in
+			guard let probeLabel = probeLabel else {
+				timer.invalidate()
+				return
+			}
+			probeLabel.text = CursorProbe.shared.summary(clientX: CParsec.mouseInfo.mouseX, clientY: CParsec.mouseInfo.mouseY)
+		}
+
 		setNeedsUpdateOfPrefersPointerLocked()
 
 		let pointerInteraction = UIPointerInteraction(delegate: self)

@@ -58,6 +58,10 @@ jobs:
           echo "file_to_build=$file_to_build" >> $GITHUB_OUTPUT
       - name: Set Build Number
         run: /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" OpenParsec/Info.plist
+      - name: Test build, expose Documents in Files
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" OpenParsec/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" OpenParsec/Info.plist
       - name: Archive
         env:
           scheme: ${{ steps.scheme.outputs.scheme }}

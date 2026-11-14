@@ -59,6 +59,49 @@ final class ConnectionLog: ObservableObject {
 	}
 }
 
+// TEST ONLY (issue 131), not part of the PR: counts cursor events and writes each one to Documents/cursor-events.csv
+final class CursorProbe {
+	static let shared = CursorProbe()
+
+	private let lock = NSLock()
+	private var total = 0
+	private var positionOnly = 0
+	private var afterLocal = 0
+	private var followed = 0
+	private var last = "none yet"
+	private var handle: FileHandle?
+	private let start = ProcessInfo.processInfo.systemUptime
+
+	private init() {
+		guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+		let url = dir.appendingPathComponent("cursor-events.csv")
+		let header = "t_ms,x,y,hidden,relative,image_update,width,height,ms_since_local_move,followed,client_x_before,client_y_before\n"
+		FileManager.default.createFile(atPath: url.path, contents: header.data(using: .utf8))
+		handle = try? FileHandle(forWritingTo: url)
+		handle?.seekToEndOfFile()
+	}
+
+	func record(_ c: ParsecCursor, sinceLocal: TimeInterval, followed didFollow: Bool, clientX: Int32, clientY: Int32) {
+		let t = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
+		let since = Int(min(sinceLocal, 99999) * 1000)
+		let line = "\(t),\(c.positionX),\(c.positionY),\(c.hidden),\(c.relative),\(c.imageUpdate),\(c.width),\(c.height),\(since),\(didFollow),\(clientX),\(clientY)\n"
+		lock.lock()
+		total += 1
+		if !c.imageUpdate { positionOnly += 1 }
+		if sinceLocal <= 0.3 { afterLocal += 1 }
+		if didFollow { followed += 1 }
+		last = "x=\(c.positionX) y=\(c.positionY) hid=\(c.hidden ? 1 : 0) rel=\(c.relative ? 1 : 0) img=\(c.imageUpdate ? 1 : 0)"
+		if let data = line.data(using: .utf8) { handle?.write(data) }
+		lock.unlock()
+	}
+
+	func summary(clientX: Int32, clientY: Int32) -> String {
+		lock.lock()
+		defer { lock.unlock() }
+		return "A events=\(total)  B no-image=\(positionOnly)  C echo=\(afterLocal)  D followed=\(followed)\nlast: \(last)\nours: x=\(clientX) y=\(clientY)"
+	}
+}
+
 func appNote(_ text: String) {
 	os_log("%{public}@", log: appLog, text)
 	ConnectionLog.shared.add(text)
@@ -422,6 +465,12 @@ class ParsecSDKBridge: ParsecService {
 		let prevHidden = mouseInfo.cursorHidden
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
+
+		// TEST ONLY
+		let probeSince = ProcessInfo.processInfo.systemUptime - lastLocalMove
+		CursorProbe.shared.record(event.cursor, sinceLocal: probeSince,
+			followed: !event.cursor.relative && !event.cursor.hidden && probeSince > 0.3,
+			clientX: mouseInfo.mouseX, clientY: mouseInfo.mouseY)
 
 		// the host moved the cursor without us (its own mouse, another guest), follow it
 		if !event.cursor.relative && !event.cursor.hidden
