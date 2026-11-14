@@ -75,7 +75,7 @@ final class CursorProbe {
 	private init() {
 		guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
 		let url = dir.appendingPathComponent("cursor-events.csv")
-		let header = "t_ms,x,y,hidden,relative,image_update,width,height,ms_since_local_move,followed,client_x_before,client_y_before\n"
+		let header = "t_ms,x,y,hidden,relative,image_update,width,height,ms_since_local_move,followed,client_x_before,client_y_before,stream\n"
 		FileManager.default.createFile(atPath: url.path, contents: header.data(using: .utf8))
 		handle = try? FileHandle(forWritingTo: url)
 		handle?.seekToEndOfFile()
@@ -84,13 +84,13 @@ final class CursorProbe {
 	func record(_ c: ParsecCursor, sinceLocal: TimeInterval, followed didFollow: Bool, clientX: Int32, clientY: Int32) {
 		let t = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
 		let since = Int(min(sinceLocal, 99999) * 1000)
-		let line = "\(t),\(c.positionX),\(c.positionY),\(c.hidden),\(c.relative),\(c.imageUpdate),\(c.width),\(c.height),\(since),\(didFollow),\(clientX),\(clientY)\n"
+		let line = "\(t),\(c.positionX),\(c.positionY),\(c.hidden),\(c.relative),\(c.imageUpdate),\(c.width),\(c.height),\(since),\(didFollow),\(clientX),\(clientY),\(c.stream)\n"
 		lock.lock()
 		total += 1
 		if !c.imageUpdate { positionOnly += 1 }
 		if sinceLocal <= 0.3 { afterLocal += 1 }
 		if didFollow { followed += 1 }
-		last = "x=\(c.positionX) y=\(c.positionY) hid=\(c.hidden ? 1 : 0) rel=\(c.relative ? 1 : 0) img=\(c.imageUpdate ? 1 : 0)"
+		last = "x=\(c.positionX) y=\(c.positionY) hid=\(c.hidden ? 1 : 0) rel=\(c.relative ? 1 : 0) img=\(c.imageUpdate ? 1 : 0) s=\(c.stream)"
 		if let data = line.data(using: .utf8) { handle?.write(data) }
 		lock.unlock()
 	}
@@ -475,8 +475,8 @@ class ParsecSDKBridge: ParsecService {
 		// the host moved the cursor without us (its own mouse, another guest), follow it
 		if !event.cursor.relative && !event.cursor.hidden
 			&& ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3 {
-			mouseInfo.mouseX = Int32(event.cursor.positionX)
-			mouseInfo.mouseY = Int32(event.cursor.positionY)
+			mouseInfo.mouseX = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionX), minValue: 0, maxValue: Int32(clientWidth))
+			mouseInfo.mouseY = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionY), minValue: 0, maxValue: Int32(clientHeight))
 		}
 
 		if event.cursor.imageUpdate || !sawCursor {
