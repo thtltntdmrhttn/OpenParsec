@@ -112,6 +112,7 @@ class ParsecSDKBridge: ParsecService {
 	public var clientWidth: Float = 1920
 	public var clientHeight: Float = 1080
 	private var hasFrame = false
+	private var didSetDimensions = false
 
 	public var netProtocol: Int32 = 1
 	public var mediaContainer: Int32 = 0
@@ -135,6 +136,8 @@ class ParsecSDKBridge: ParsecService {
 	private var capsLock = false
 
 	public var mouseInfo = MouseInfo()
+	// when we last sent the host an absolute pointer position
+	private var lastLocalMove: TimeInterval = 0
 
 	init() {
 		os_log("%{public}@", log: sdkLog, "Parsec SDK Version: " + String(ParsecSDKBridge.PARSEC_VER))
@@ -200,6 +203,7 @@ class ParsecSDKBridge: ParsecService {
 
 		self.startBackgroundTask()
 		didReleaseOnConnect = false
+		didSetDimensions = false
 
 		let status = ParsecClientConnect(_parsec, &parsecClientCfg, NetworkHandler.clinfo?.session_id, peerID)
 
@@ -285,6 +289,7 @@ class ParsecSDKBridge: ParsecService {
 	func setFrame(_ width: CGFloat, _ height: CGFloat, _ scale: CGFloat) {
 
 		ParsecClientSetDimensions(_parsec, UInt8(DEFAULT_STREAM), UInt32(width), UInt32(height), Float(scale))
+		didSetDimensions = true
 
 		let oldSize = CGSize(width: CGFloat(clientWidth), height: CGFloat(clientHeight))
 		clientWidth = Float(width)
@@ -417,9 +422,18 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func handleCursorEvent(event: ParsecClientCursorEvent, sawCursor: inout Bool) {
-		let prevHidden = mouseInfo.cursorHidden
+		let prevRelative = mouseInfo.mousePositionRelative
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
+
+		// take the host's position when the cursor leaves relative mode or the host moved it without us.
+		// events right after our own move are that move coming back. the sdk has no dimensions to place
+		// the position with until setFrame has run for this connection
+		if didSetDimensions && !event.cursor.relative && !event.cursor.hidden
+			&& (prevRelative || ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3) {
+			mouseInfo.mouseX = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionX), minValue: 0, maxValue: Int32(clientWidth))
+			mouseInfo.mouseY = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionY), minValue: 0, maxValue: Int32(clientHeight))
+		}
 
 		if event.cursor.imageUpdate || !sawCursor {
 			sawCursor = true
@@ -437,11 +451,6 @@ class ParsecSDKBridge: ParsecService {
 			}
 			mouseInfo.cursorWidth = Int(width)
 			mouseInfo.cursorHeight = Int(height)
-
-			if prevHidden && !event.cursor.hidden {
-				mouseInfo.mouseX = Int32(event.cursor.positionX)
-				mouseInfo.mouseY = Int32(event.cursor.positionY)
-			}
 
 			mouseInfo.cursorHotX = Int(event.cursor.hotX)
 			mouseInfo.cursorHotY = Int(event.cursor.hotY)
@@ -517,6 +526,7 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func sendMousePosition(_ x: Int32, _ y: Int32) {
+		lastLocalMove = ProcessInfo.processInfo.systemUptime
 		mouseInfo.mouseX = ParsecSDKBridge.clamp(x, minValue: 0, maxValue: Int32(self.clientWidth))
 		mouseInfo.mouseY = ParsecSDKBridge.clamp(y, minValue: 0, maxValue: Int32(self.clientHeight))
 		var motionMessage = ParsecMessage()
