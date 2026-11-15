@@ -178,7 +178,7 @@ class ParsecSDKBridge: ParsecService {
 	private var capsLock = false
 
 	public var mouseInfo = MouseInfo()
-	// when we last moved the pointer ourselves, cursor events right after are our own move coming back
+	// when we last sent the host an absolute pointer position
 	private var lastLocalMove: TimeInterval = 0
 
 	init() {
@@ -463,18 +463,22 @@ class ParsecSDKBridge: ParsecService {
 
 	func handleCursorEvent(event: ParsecClientCursorEvent, sawCursor: inout Bool) {
 		let prevHidden = mouseInfo.cursorHidden
+		let prevRelative = mouseInfo.mousePositionRelative
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
+
+		// take the host's position when the cursor comes back (unhidden, or out of relative mode) and when
+		// the host moved it without us. events right after our own move are that move coming back
+		let cameBack = (prevHidden && !event.cursor.hidden) || (prevRelative && !event.cursor.relative)
 
 		// TEST ONLY
 		let probeSince = ProcessInfo.processInfo.systemUptime - lastLocalMove
 		CursorProbe.shared.record(event.cursor, sinceLocal: probeSince,
-			followed: !event.cursor.relative && !event.cursor.hidden && probeSince > 0.3,
+			followed: hasFrame && !event.cursor.relative && !event.cursor.hidden && (cameBack || probeSince > 0.3),
 			clientX: mouseInfo.mouseX, clientY: mouseInfo.mouseY)
 
-		// the host moved the cursor without us (its own mouse, another guest), follow it
-		if !event.cursor.relative && !event.cursor.hidden
-			&& ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3 {
+		if hasFrame && !event.cursor.relative && !event.cursor.hidden
+			&& (cameBack || ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3) {
 			mouseInfo.mouseX = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionX), minValue: 0, maxValue: Int32(clientWidth))
 			mouseInfo.mouseY = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionY), minValue: 0, maxValue: Int32(clientHeight))
 		}
@@ -495,11 +499,6 @@ class ParsecSDKBridge: ParsecService {
 			}
 			mouseInfo.cursorWidth = Int(width)
 			mouseInfo.cursorHeight = Int(height)
-
-			if prevHidden && !event.cursor.hidden {
-				mouseInfo.mouseX = Int32(event.cursor.positionX)
-				mouseInfo.mouseY = Int32(event.cursor.positionY)
-			}
 
 			mouseInfo.cursorHotX = Int(event.cursor.hotX)
 			mouseInfo.cursorHotY = Int(event.cursor.hotY)
@@ -586,7 +585,6 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func sendMouseRelativeMove(_ dx: Int32, _ dy: Int32) {
-		lastLocalMove = ProcessInfo.processInfo.systemUptime
 		var motionMessage = ParsecMessage()
 		motionMessage.type = MESSAGE_MOUSE_MOTION
 		motionMessage.mouseMotion.x = dx
