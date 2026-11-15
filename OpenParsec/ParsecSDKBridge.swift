@@ -155,6 +155,7 @@ class ParsecSDKBridge: ParsecService {
 	public var clientWidth: Float = 1920
 	public var clientHeight: Float = 1080
 	private var hasFrame = false
+	private var didSetDimensions = false
 
 	public var netProtocol: Int32 = 1
 	public var mediaContainer: Int32 = 0
@@ -245,6 +246,7 @@ class ParsecSDKBridge: ParsecService {
 
 		self.startBackgroundTask()
 		didReleaseOnConnect = false
+		didSetDimensions = false
 
 		let status = ParsecClientConnect(_parsec, &parsecClientCfg, NetworkHandler.clinfo?.session_id, peerID)
 
@@ -330,6 +332,7 @@ class ParsecSDKBridge: ParsecService {
 	func setFrame(_ width: CGFloat, _ height: CGFloat, _ scale: CGFloat) {
 
 		ParsecClientSetDimensions(_parsec, UInt8(DEFAULT_STREAM), UInt32(width), UInt32(height), Float(scale))
+		didSetDimensions = true
 
 		let oldSize = CGSize(width: CGFloat(clientWidth), height: CGFloat(clientHeight))
 		clientWidth = Float(width)
@@ -462,23 +465,22 @@ class ParsecSDKBridge: ParsecService {
 	}
 
 	func handleCursorEvent(event: ParsecClientCursorEvent, sawCursor: inout Bool) {
-		let prevHidden = mouseInfo.cursorHidden
 		let prevRelative = mouseInfo.mousePositionRelative
 		mouseInfo.cursorHidden = event.cursor.hidden
 		mouseInfo.mousePositionRelative = event.cursor.relative
 
-		// take the host's position when the cursor comes back (unhidden, or out of relative mode) and when
-		// the host moved it without us. events right after our own move are that move coming back
-		let cameBack = (prevHidden && !event.cursor.hidden) || (prevRelative && !event.cursor.relative)
+		// take the host's position when the cursor leaves relative mode or the host moved it without us.
+		// events right after our own move are that move coming back. the sdk has no dimensions to place
+		// the position with until setFrame has run for this connection
 
 		// TEST ONLY
 		let probeSince = ProcessInfo.processInfo.systemUptime - lastLocalMove
 		CursorProbe.shared.record(event.cursor, sinceLocal: probeSince,
-			followed: hasFrame && !event.cursor.relative && !event.cursor.hidden && (cameBack || probeSince > 0.3),
+			followed: didSetDimensions && !event.cursor.relative && !event.cursor.hidden && (prevRelative || probeSince > 0.3),
 			clientX: mouseInfo.mouseX, clientY: mouseInfo.mouseY)
 
-		if hasFrame && !event.cursor.relative && !event.cursor.hidden
-			&& (cameBack || ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3) {
+		if didSetDimensions && !event.cursor.relative && !event.cursor.hidden
+			&& (prevRelative || ProcessInfo.processInfo.systemUptime - lastLocalMove > 0.3) {
 			mouseInfo.mouseX = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionX), minValue: 0, maxValue: Int32(clientWidth))
 			mouseInfo.mouseY = ParsecSDKBridge.clamp(Int32(clamping: event.cursor.positionY), minValue: 0, maxValue: Int32(clientHeight))
 		}
